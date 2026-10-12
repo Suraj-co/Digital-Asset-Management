@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+coverage
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+*.log
+*.dump
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+apps/api/src/generated
+apps/web/node_modules/.tmp
+agent-tools

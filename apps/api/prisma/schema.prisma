@@ -1,0 +1,535 @@
+// Asset, workflow, and audit models are specified in
+// docs/architecture/07-database-erd.md and are added in their own modules.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum MembershipRole {
+  creator
+  rm
+  admin
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  passwordHash String
+  status       UserStatus   @default(active)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  sessions     Session[]
+  memberships  Membership[]
+  assets       Asset[]
+  uploads      UploadOperation[]
+  versions     AssetVersion[]
+  decisions    WorkflowDecision[]
+  tasksCreated Task[]            @relation("TaskCreator")
+  assignments  TaskAssignment[]
+  taskComments TaskComment[]     @relation("TaskCommentAuthor")
+  taskFiles    TaskFile[]        @relation("TaskFileAuthor")
+  timeEntries   TimeEntry[]       @relation("TimeWorker")
+  timeReviews   TimeEntry[]       @relation("TimeReviewer")
+  notifications Notification[]
+  auditEvents   AuditEvent[]
+  creatorInvitations CreatorInvitation[] @relation("CreatorInviter")
+}
+
+model Company {
+  id              String       @id @default(uuid()) @db.Uuid
+  code            String       @unique
+  name            String
+  active          Boolean      @default(true)
+  hourlyRateMinor Int?
+  currency        String       @default("INR")
+  createdAt       DateTime     @default(now())
+  memberships     Membership[]
+  departments Department[]
+  folders     FolderCatalog[]
+  assets      Asset[]
+  tasks         Task[]
+  timeEntries   TimeEntry[]
+  notifications Notification[]
+  auditEvents   AuditEvent[]
+  creatorInvitations CreatorInvitation[]
+}
+
+enum FolderStage {
+  working
+  approved
+  archive
+}
+
+enum FolderAssetType {
+  images
+  videos
+  posters
+  banners
+  source_files
+  other
+}
+
+model Department {
+  id        String          @id @default(uuid()) @db.Uuid
+  companyId String          @db.Uuid
+  company   Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name      String
+  active    Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  folders   FolderCatalog[]
+  tasks     Task[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model FolderCatalog {
+  id            String          @id @default(uuid()) @db.Uuid
+  companyId     String          @db.Uuid
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  departmentId  String          @db.Uuid
+  department    Department      @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  year          Int
+  campaign      String
+  stage         FolderStage
+  assetType     FolderAssetType
+  path          String
+  driveFolderId String?
+  createdAt     DateTime        @default(now())
+  assets        Asset[]
+
+  @@unique([departmentId, year, campaign, stage, assetType])
+  @@index([companyId])
+}
+
+enum AssetState {
+  upload_failed
+}
+
+enum UploadStatus {
+  drive_failed
+}
+
+enum UploadFailureClass {
+  not_configured
+}
+
+model Asset {
+  id          String            @id @default(uuid()) @db.Uuid
+  companyId   String            @db.Uuid
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  folderId    String            @db.Uuid
+  folder      FolderCatalog     @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  sequence    Int
+  code        String
+  title       String
+  state         AssetState
+  workflowStage WorkflowStage     @default(draft)
+  publication       PublicationStatus @default(not_started)
+  approvedVersionId String?           @unique @db.Uuid
+  approvedVersion   AssetVersion?     @relation("ActiveApprovedVersion", fields: [approvedVersionId], references: [id], onDelete: Restrict)
+  createdById       String            @db.Uuid
+  createdBy   User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  operations  UploadOperation[]
+  versions    AssetVersion[]
+  decisions   WorkflowDecision[]
+  taskLinks   TaskLink[]
+
+  @@unique([companyId, sequence])
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([folderId])
+}
+
+model UploadOperation {
+  id             String             @id @default(uuid()) @db.Uuid
+  assetId        String             @db.Uuid
+  asset          Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  userId         String             @db.Uuid
+  user           User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status         UploadStatus
+  failureClass   UploadFailureClass
+  fileName       String
+  byteSize       Int
+  contentType    String
+  idempotencyKey String?
+  detail         String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([assetId])
+}
+
+model AssetVersion {
+  id             String             @id @default(uuid()) @db.Uuid
+  assetId        String             @db.Uuid
+  asset          Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  number         Int
+  fileName       String
+  byteSize       Int
+  contentType    String
+  state          AssetState
+  failureClass   UploadFailureClass
+  detail         String
+  driveFileId    String?
+  idempotencyKey String?
+  createdById    String             @db.Uuid
+  createdBy      User               @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  decisions      WorkflowDecision[]
+  approvedFor    Asset?             @relation("ActiveApprovedVersion")
+  driveCleanups  DriveCleanup[]
+
+  @@unique([assetId, number])
+  @@unique([createdById, idempotencyKey])
+  @@index([assetId])
+}
+
+enum WorkflowStage {
+  draft
+  scope_analysis
+  rm_qc
+  rm_approval
+  admin_qc
+  admin_approval
+  changes_requested
+}
+
+enum PublicationStatus {
+  not_started
+  not_run
+  ready
+}
+
+enum DriveCleanupStatus {
+  pending
+  running
+  deleted
+  failed
+  kept
+}
+
+model DriveCleanup {
+  id          String             @id @default(uuid()) @db.Uuid
+  versionId   String             @unique @db.Uuid
+  version     AssetVersion       @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  driveFileId String
+  status      DriveCleanupStatus @default(pending)
+  attempts    Int                @default(0)
+  detail      String             @default("")
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status])
+}
+
+enum WorkflowAction {
+  submit
+  approve
+  reject
+  publish
+  resubmit
+}
+
+model WorkflowDecision {
+  id         String         @id @default(uuid()) @db.Uuid
+  assetId    String         @db.Uuid
+  asset      Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  versionId  String         @db.Uuid
+  version    AssetVersion   @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  action     WorkflowAction
+  fromStage  WorkflowStage
+  toStage    WorkflowStage
+  reason     String?
+  detail     String
+  actorId    String         @db.Uuid
+  actor      User           @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt  DateTime       @default(now())
+
+  @@index([assetId])
+}
+
+enum TaskStatus {
+  open
+  done
+}
+
+enum TaskStage {
+  draft
+  assigned
+  in_progress
+  submitted_rm_qc
+  rm_approved
+  submitted_admin_qc
+  admin_approved
+  ready_to_publish
+  completed
+  changes_requested
+}
+
+enum TaskPriority {
+  low
+  normal
+  high
+}
+
+model Task {
+  id          String           @id @default(uuid()) @db.Uuid
+  companyId   String           @db.Uuid
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  title        String
+  detail       String           @default("")
+  status       TaskStatus       @default(open)
+  stage        TaskStage        @default(draft)
+  departmentId String?          @db.Uuid
+  department   Department?      @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  deadline     DateTime?        @db.Date
+  priority     TaskPriority?
+  createdById  String           @db.Uuid
+  createdBy   User             @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  assignments TaskAssignment[]
+  links       TaskLink[]
+  timeEntries TimeEntry[]
+  comments    TaskComment[]
+  files       TaskFile[]
+
+  @@index([companyId])
+  @@index([departmentId])
+}
+
+model TaskComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String   @db.Uuid
+  author    User     @relation("TaskCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model TaskFile {
+  id          String   @id @default(uuid()) @db.Uuid
+  taskId      String   @db.Uuid
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fileName    String
+  byteSize    Int
+  contentType String
+  driveFileId String?
+  detail      String
+  createdById String   @db.Uuid
+  createdBy   User     @relation("TaskFileAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model TaskAssignment {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, userId])
+  @@index([userId])
+}
+
+model TaskLink {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  assetId   String   @db.Uuid
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, assetId])
+  @@index([assetId])
+}
+
+enum TimeEntryStatus {
+  open
+  submitted
+  accepted
+  returned
+}
+
+model TimeEntry {
+  id           String          @id @default(uuid()) @db.Uuid
+  companyId    String          @db.Uuid
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  userId       String          @db.Uuid
+  user         User            @relation("TimeWorker", fields: [userId], references: [id], onDelete: Restrict)
+  taskId       String?         @db.Uuid
+  task         Task?           @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  workDate     DateTime        @db.Date
+  minutes      Int
+  note         String          @default("")
+  status       TimeEntryStatus @default(open)
+  reviewReason String?
+  reviewedById String?         @db.Uuid
+  reviewedBy   User?           @relation("TimeReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([companyId])
+  @@index([userId])
+  @@index([taskId])
+}
+
+enum NotificationKind {
+  task_assigned
+  time_returned
+  asset_rejected
+  asset_submitted
+  asset_approved
+  task_updated
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  companyId String           @db.Uuid
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  userId    String           @db.Uuid
+  user      User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  kind      NotificationKind
+  body      String
+  href      String
+  readAt        DateTime?
+  createdAt     DateTime         @default(now())
+  emailDelivery EmailDelivery?
+
+  @@index([userId, createdAt])
+  @@index([companyId])
+}
+
+enum EmailStatus {
+  pending
+  queued
+  held
+  sent
+  failed
+}
+
+model CreatorInvitation {
+  id            String         @id @default(uuid()) @db.Uuid
+  companyId     String         @db.Uuid
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  email         String
+  name          String
+  invitedById   String         @db.Uuid
+  invitedBy     User           @relation("CreatorInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  tokenHash     String         @unique
+  expiresAt     DateTime
+  acceptedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  emailDelivery EmailDelivery?
+
+  @@index([companyId, email])
+  @@index([email])
+}
+
+model EmailDelivery {
+  id             String             @id @default(uuid()) @db.Uuid
+  notificationId String?            @unique @db.Uuid
+  notification   Notification?      @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  invitationId   String?            @unique @db.Uuid
+  invitation     CreatorInvitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  toAddress      String
+  subject        String
+  body           String
+  status         EmailStatus        @default(pending)
+  detail         String
+  sentAt         DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([status])
+}
+
+enum AuditAction {
+  asset_recorded
+  asset_retried
+  asset_version_recorded
+  asset_resubmitted
+  asset_title_changed
+  asset_submitted
+  asset_approved
+  asset_rejected
+  asset_published
+  drive_file_removed
+  task_planned
+  task_changed
+  time_recorded
+  time_changed
+  time_submitted
+  time_accepted
+  time_returned
+  membership_granted
+  creator_invited
+  membership_revoked
+  account_disabled
+  account_enabled
+  pay_rate_set
+}
+
+model AuditEvent {
+  id          String      @id @default(uuid()) @db.Uuid
+  companyId   String      @db.Uuid
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actorId     String      @db.Uuid
+  actor       User        @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action      AuditAction
+  summary     String
+  subjectType String?
+  subjectId   String?     @db.Uuid
+  createdAt   DateTime    @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([actorId])
+}
+
+model Membership {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @db.Uuid
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String         @db.Uuid
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  role      MembershipRole
+  createdAt DateTime       @default(now())
+
+  @@unique([userId, companyId, role])
+  @@index([userId])
+  @@index([companyId])
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}

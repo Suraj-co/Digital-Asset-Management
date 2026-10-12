@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dam
+          POSTGRES_PASSWORD: dam_local_dev_only
+          POSTGRES_DB: dam
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dam -d dam"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      PORT: 43124
+      WEB_ORIGIN: http://127.0.0.1:43123
+      LOG_LEVEL: error
+      DATABASE_URL: postgresql://dam:dam_local_dev_only@127.0.0.1:5432/dam_test?schema=public
+      TEST_DATABASE_URL: postgresql://dam:dam_local_dev_only@127.0.0.1:5432/dam_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Create the test database
+        run: pnpm --filter @aaradhya/api exec node scripts/ensure-test-database.mjs
+      - name: Apply migrations
+        run: pnpm db:migrate
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: API end-to-end tests
+        run: pnpm test:e2e
+      - name: Production build
+        run: pnpm build

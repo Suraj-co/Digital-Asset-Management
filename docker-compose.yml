@@ -1,0 +1,36 @@
+# Local dependencies for Aaradhya DAM.
+# PostgreSQL is the application database. Redis queues email copies.
+# Start Redis with: docker compose --profile jobs up -d redis
+name: aaradhya-dam
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dam
+      POSTGRES_PASSWORD: dam_local_dev_only
+      POSTGRES_DB: dam
+    ports:
+      - "5432:5432"
+    volumes:
+      - dam_postgres:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dam -d dam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    profiles: ["jobs"]
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dam_postgres:
